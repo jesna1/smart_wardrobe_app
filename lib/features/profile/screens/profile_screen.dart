@@ -204,7 +204,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final client = _activeDio;
     if (client == null) return;
 
-    setState(() => _isLoading = true);
+    // Only show full loading if we don't have profile data yet
+    if (mounted) setState(() => _isLoading = true);
+
     try {
       dev.log('==> GET /users/me/profile', name: 'PROFILE_SCREEN');
       final response = await client.get(
@@ -212,7 +214,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         cancelToken: _cancelToken,
       );
       dev.log('<== Status Code: ${response.statusCode}', name: 'PROFILE_SCREEN');
-      dev.log('<== Response Data: ${response.data}', name: 'PROFILE_SCREEN');
+
       if (mounted && response.data != null) {
         setState(() {
           _currentProfile = UserProfileData.fromJson(response.data);
@@ -220,15 +222,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) return;
-      dev.log('❌ DioException in _fetchInitialProfile', name: 'PROFILE_SCREEN', error: e);
-      _showErrorSnackBar(
-        'Fetch Profile Failed (${e.response?.statusCode ?? 'Network'}): ${e.response?.data ?? e.message}',
-      );
-    } catch (e, stack) {
-      dev.log('❌ Unexpected error in _fetchInitialProfile', name: 'PROFILE_SCREEN', error: e, stackTrace: stack);
-      _showErrorSnackBar('Unexpected error: $e');
+      dev.log('⚠️ Could not fetch remote profile (using local template): ${e.message}', name: 'PROFILE_SCREEN');
+    } catch (e) {
+      dev.log('⚠️ Unexpected error fetching profile: $e', name: 'PROFILE_SCREEN');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 

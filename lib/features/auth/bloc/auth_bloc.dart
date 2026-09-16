@@ -21,6 +21,24 @@ class LoginRequested extends AuthEvent {
   List<Object?> get props => [email, password];
 }
 
+// Added Registration Event
+class RegisterRequested extends AuthEvent {
+  final String name;
+  final String email;
+  final String password;
+  final String location;
+
+  RegisterRequested({
+    required this.name,
+    required this.email,
+    required this.password,
+    required this.location,
+  });
+
+  @override
+  List<Object?> get props => [name, email, password, location];
+}
+
 class LogoutRequested extends AuthEvent {}
 
 // --- States ---
@@ -55,6 +73,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   AuthBloc(this.apiClient) : super(AuthInitial()) {
     on<AppStarted>(_onAppStarted);
     on<LoginRequested>(_onLoginRequested);
+    on<RegisterRequested>(_onRegisterRequested);
     on<LogoutRequested>(_onLogoutRequested);
   }
 
@@ -68,15 +87,19 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     }
 
     try {
-      // Validate existing JWT with the backend profile endpoint
+      // Set token on Dio header so subsequent calls work
+      apiClient.dio.options.headers['Authorization'] = 'Bearer $token';
+
       final response = await apiClient.dio.get('/auth/me');
-      final email = response.data['email'] as String;
-      emit(Authenticated(email));
-    } on DioException catch (e) {
-      // If token is expired (401) or server unreachable, clear storage
-      await _storage.delete(key: 'jwt_token');
-      emit(Unauthenticated());
-    } catch (_) {
+      if (response.statusCode == 200) {
+        final email = response.data['email']?.toString() ?? 'user@aura.com';
+        emit(Authenticated(email));
+      } else {
+        await _storage.delete(key: 'jwt_token');
+        emit(Unauthenticated());
+      }
+    } catch (e) {
+      // If token verification fails, clear storage and show login
       await _storage.delete(key: 'jwt_token');
       emit(Unauthenticated());
     }
@@ -85,7 +108,49 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   Future<void> _onLoginRequested(LoginRequested event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
     try {
+      // Use FormData because FastAPI backend expects OAuth2PasswordRequestForm
+      final formData = FormData.fromMap({
+        'username': event.email, // FastAPI OAuth2 form expects 'username'
+        'password': event.password,
+      });
+
       final response = await apiClient.dio.post(
+        '/auth/login',
+        data: formData,
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+        ),
+      );
+
+      final token = response.data['access_token'] ?? response.data['token'];
+      if (token != null) {
+        await _storage.write(key: 'jwt_token', value: token);
+        apiClient.dio.options.headers['Authorization'] = 'Bearer $token';
+
+        emit(Authenticated(event.email));
+      } else {
+        emit(AuthError('Token not found in login response'));
+      }
+    } catch (e) {
+      emit(AuthError('Invalid email or password. Please try again.'));
+    }
+  }
+  // Added Registration Handler communicating with FastAPI backend
+  Future<void> _onRegisterRequested(RegisterRequested event, Emitter<AuthState> emit) async {
+    emit(AuthLoading());
+    try {
+      // 1. Call registration endpoint
+      await apiClient.dio.post(
+        '/auth/register',
+        data: {
+          'name': event.name,
+          'email': event.email,
+          'password': event.password,
+        },
+      );
+
+      // 2. Automatically log them in right after successful registration
+      final loginResponse = await apiClient.dio.post(
         '/auth/login',
         data: {
           'username': event.email,
@@ -94,11 +159,15 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         options: Options(contentType: Headers.formUrlEncodedContentType),
       );
 
-      final token = response.data['access_token'] as String;
+      final token = loginResponse.data['access_token'] as String;
+
+      // 3. CRITICAL: Save token AND attach it to Dio headers immediately
       await _storage.write(key: 'jwt_token', value: token);
+      apiClient.dio.options.headers['Authorization'] = 'Bearer $token';
+
       emit(Authenticated(event.email));
     } catch (e) {
-      emit(AuthError("Invalid credentials or server unavailable."));
+      emit(AuthError("Registration failed. Email might already be in use."));
     }
   }
 

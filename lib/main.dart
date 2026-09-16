@@ -4,6 +4,7 @@ import 'package:get_it/get_it.dart';
 import 'core/api/api_client.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/screen/login_screen.dart';
+import 'features/home/screens/welcome_screen.dart';
 import 'features/stylist/bloc/stylist_bloc.dart';
 import 'features/wardrobe/bloc/wardrobe_bloc.dart';
 import 'features/navigation/presentation/main_navigation_screen.dart';
@@ -77,16 +78,39 @@ class AuthenticationGateway extends StatelessWidget {
         }
       },
       builder: (context, state) {
+        // 1. If already logged in, show Main Navigation directly
         if (state is Authenticated) {
           return const MainNavigationScreen();
-        } else if (state is Unauthenticated || state is AuthError) {
-          return const LoginScreen();
         }
 
+        // 2. If NOT logged in, show the Welcome Flow container.
+        // This hosts the WelcomeScreen as its root, allowing users to push Login or Register safely.
+        if (state is Unauthenticated || state is AuthError) {
+          return const WelcomeNavigator();
+        }
+
+        // 3. Initial startup token check loader
         return const Scaffold(
+          backgroundColor: Color(0xFFF8F9FA),
           body: Center(
             child: CircularProgressIndicator(color: Color(0xFF1E293B)),
           ),
+        );
+      },
+    );
+  }
+}
+
+/// A mini-navigator container for unauthenticated flows (Welcome ➔ Login / Register)
+class WelcomeNavigator extends StatelessWidget {
+  const WelcomeNavigator({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Navigator(
+      onGenerateRoute: (settings) {
+        return MaterialPageRoute(
+          builder: (context) => const WelcomeScreen(), // Your initial landing screen
         );
       },
     );
